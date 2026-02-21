@@ -6,6 +6,21 @@
   const GAMES_BY_GRADE = 3;
   const TOTAL_GAMES = 5;
 
+  function getApiBase() {
+    var b = (typeof window !== 'undefined' && window.TENNIS_API_BASE) ? window.TENNIS_API_BASE : '';
+    return (b + '').replace(/\/$/, '');
+  }
+  function getStateUrl() {
+    var base = getApiBase();
+    return base ? base + '/api/state' : '/api/state';
+  }
+  function useServerData() {
+    var base = getApiBase();
+    if (base) return true;
+    var p = typeof window !== 'undefined' ? window.location.protocol : '';
+    return p === 'http:' || p === 'https:';
+  }
+
   function getStartTimeOptions() {
     var opts = [];
     for (var h = 5; h <= 12; h++) {
@@ -209,8 +224,8 @@
         cb(false);
       }
     }
-    if (window.location.protocol === 'http:' || window.location.protocol === 'https:') {
-      fetch('/api/state', { method: 'GET' })
+    if (useServerData()) {
+      fetch(getStateUrl(), { method: 'GET' })
         .then(function (res) { return res.ok ? res.json() : null; })
         .then(function (data) {
           if (data != null) {
@@ -242,11 +257,11 @@
   }
 
   function refetchFromServer(cb) {
-    if (window.location.protocol !== 'http:' && window.location.protocol !== 'https:') {
+    if (!useServerData()) {
       if (cb) cb(false);
       return;
     }
-    fetch('/api/state', { method: 'GET' })
+    fetch(getStateUrl(), { method: 'GET' })
       .then(function (res) { return res.ok ? res.json() : null; })
       .then(function (data) {
         if (data != null) {
@@ -273,13 +288,9 @@
     localStorage.setItem('tennis_headToHead', JSON.stringify(state.headToHead));
     localStorage.setItem('tennis_matchWins', JSON.stringify(state.matchWins));
     
-    // file:// 프로토콜일 때는 서버 요청을 하지 않음 (CORS 에러 방지)
-    if (window.location.protocol === 'file:') {
-      return;
-    }
+    if (!useServerData()) return;
     
-    // 서버가 있을 경우에만 저장 시도
-    fetch('/api/state', {
+    fetch(getStateUrl(), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -888,8 +899,7 @@
       });
     }
 
-    var isServer = window.location.protocol === 'http:' || window.location.protocol === 'https:';
-    if (isServer && id !== 'screen-load') {
+    if (useServerData() && id !== 'screen-load') {
       refetchFromServer(function () {
         doShow();
       });
@@ -1838,7 +1848,7 @@
           : '데이터: 이 기기만 (같은 주소로 접속하면 공유됨)';
       }
       if (refetchBtn) {
-        refetchBtn.style.display = (window.location.protocol === 'http:' || window.location.protocol === 'https:') ? '' : 'none';
+        refetchBtn.style.display = useServerData() ? '' : 'none';
       }
       
       if (!state.baseScores) state.baseScores = {};

@@ -14,14 +14,17 @@
         <h1>테니스 클럽 관리</h1>
       </header>
       <div class="load-card">
+        <p id="data-source-msg" class="data-source-msg" style="display:none; margin-bottom:8px; font-size:0.9rem;"></p>
         <p id="load-message">초기화 중...</p>
-        <p class="hint">처음 실행 시 프로젝트 폴더의 <strong>user.txt</strong>를 읽어 브라우저에 저장합니다. 형식: 이름\t그레이드\t점수 (탭으로 구분, 한 줄에 한 사용자)</p>
+        <p class="hint">모두 같은 정보를 보려면 <strong>서버를 실행</strong>한 뒤 <strong>같은 주소(http://서버IP:3000)</strong>로 접속하세요. 데이터는 서버의 <strong>data/tennis.json</strong> 한 파일에 저장됩니다.</p>
+        <p class="hint">처음 실행 시 <strong>user.txt</strong>를 읽어 저장합니다. 형식: 이름\t그레이드\t점수 (탭 구분)</p>
         <div id="load-status" class="load-status"></div>
         <div id="file-input-container" style="margin-top:12px; display:none;">
           <input type="file" id="user-file-input" accept=".txt" style="display:none;" />
           <button type="button" class="btn secondary" id="btn-select-file" style="width:100%;">user.txt 파일 선택</button>
         </div>
         <button type="button" class="btn secondary" id="btn-update-users" style="margin-top:12px; display:none;">user.txt에서 사용자 정보 업데이트</button>
+        <button type="button" class="btn secondary" id="btn-refetch-server" style="margin-top:8px; display:none;">서버에서 최신 데이터 불러오기</button>
       </div>
     </section>
 

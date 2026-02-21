@@ -21,12 +21,13 @@
     baseScores: {},
     matchScores: {},
     headToHead: {},
-    matchWins: {}, // 경기당 승패 기록 (userId -> {wins: number, losses: number})
+    matchWins: {},
     currentMonth: null,
     selectedDate: null,
     vsUserId: null,
     memberPassword: '1234',
-    selectedMemberId: null
+    selectedMemberId: null,
+    dataSource: 'local'
   };
 
   function applyStateData(data) {
@@ -215,17 +216,22 @@
           if (data != null) {
             applyStateData(data);
             saveState();
-            console.log('loadState - 서버에서 데이터 불러옴 (모두 동일한 정보)');
+            state.dataSource = 'server';
+            console.log('loadState - 서버 데이터베이스(tennis.json)에서 불러옴');
           } else {
+            state.dataSource = 'local';
             loadStateFromLocal();
           }
           afterLoad();
         })
         .catch(function () {
+          state.dataSource = 'local';
           loadStateFromLocal();
+          alert('서버에 연결할 수 없습니다. 모두가 같은 정보를 보려면 서버를 실행한 뒤 같은 주소(http://서버IP:3000)로 접속하세요.');
           afterLoad();
         });
     } else {
+      state.dataSource = 'local';
       try {
         loadStateFromLocal();
       } catch (e) {
@@ -233,6 +239,28 @@
       }
       afterLoad();
     }
+  }
+
+  function refetchFromServer(cb) {
+    if (window.location.protocol !== 'http:' && window.location.protocol !== 'https:') {
+      if (cb) cb(false);
+      return;
+    }
+    fetch('/api/state', { method: 'GET' })
+      .then(function (res) { return res.ok ? res.json() : null; })
+      .then(function (data) {
+        if (data != null) {
+          applyStateData(data);
+          saveState();
+          state.dataSource = 'server';
+          if (cb) cb(true);
+        } else {
+          if (cb) cb(false);
+        }
+      })
+      .catch(function () {
+        if (cb) cb(false);
+      });
   }
 
   function saveState() {
@@ -829,34 +857,45 @@
   }
 
   function showScreen(id) {
-    document.querySelectorAll('.screen').forEach(function (el) {
-      el.classList.remove('active');
-    });
-    const el = document.getElementById(id);
-    if (el) el.classList.add('active');
+    function doShow() {
+      document.querySelectorAll('.screen').forEach(function (el) {
+        el.classList.remove('active');
+      });
+      const el = document.getElementById(id);
+      if (el) el.classList.add('active');
 
-    if (id === 'screen-calendar') renderCalendar();
-    if (id === 'screen-day' && state.selectedDate) renderDayView();
-    if (id === 'screen-bracket' && state.selectedDate) renderBracket();
-    if (id === 'screen-stats') {
-      renderStats();
-    }
-    if (id === 'screen-member') {
-      showMemberPassword();
+      if (id === 'screen-calendar') renderCalendar();
+      if (id === 'screen-day' && state.selectedDate) renderDayView();
+      if (id === 'screen-bracket' && state.selectedDate) renderBracket();
+      if (id === 'screen-stats') {
+        renderStats();
+      }
+      if (id === 'screen-member') {
+        showMemberPassword();
+      }
+
+      const nav = document.getElementById('bottom-nav');
+      if (nav) {
+        nav.style.display = (id === 'screen-calendar' || id === 'screen-stats' || id === 'screen-member') ? 'flex' : 'none';
+      }
+      document.querySelectorAll('.nav-item').forEach(function (n) {
+        var screen = n.getAttribute('data-screen');
+        var isActive = false;
+        if (id === 'screen-calendar' && screen === 'calendar') isActive = true;
+        else if (id === 'screen-stats' && screen === 'stats') isActive = true;
+        else if (id === 'screen-member' && screen === 'member') isActive = true;
+        n.classList.toggle('active', isActive);
+      });
     }
 
-    const nav = document.getElementById('bottom-nav');
-    if (nav) {
-      nav.style.display = (id === 'screen-calendar' || id === 'screen-stats' || id === 'screen-member') ? 'flex' : 'none';
+    var isServer = window.location.protocol === 'http:' || window.location.protocol === 'https:';
+    if (isServer && id !== 'screen-load') {
+      refetchFromServer(function () {
+        doShow();
+      });
+    } else {
+      doShow();
     }
-    document.querySelectorAll('.nav-item').forEach(function (n) {
-      var screen = n.getAttribute('data-screen');
-      var isActive = false;
-      if (id === 'screen-calendar' && screen === 'calendar') isActive = true;
-      else if (id === 'screen-stats' && screen === 'stats') isActive = true;
-      else if (id === 'screen-member' && screen === 'member') isActive = true;
-      n.classList.toggle('active', isActive);
-    });
   }
 
   function renderCalendar() {
@@ -1790,6 +1829,18 @@
     function runInit(loadedFromServer) {
       console.log('runInit 시작, 사용자 수:', state.users ? state.users.length : 0);
       
+      var dataSourceEl = document.getElementById('data-source-msg');
+      var refetchBtn = document.getElementById('btn-refetch-server');
+      if (dataSourceEl) {
+        dataSourceEl.style.display = 'block';
+        dataSourceEl.textContent = state.dataSource === 'server'
+          ? '데이터: 서버(공유) — data/tennis.json'
+          : '데이터: 이 기기만 (같은 주소로 접속하면 공유됨)';
+      }
+      if (refetchBtn) {
+        refetchBtn.style.display = (window.location.protocol === 'http:' || window.location.protocol === 'https:') ? '' : 'none';
+      }
+      
       if (!state.baseScores) state.baseScores = {};
       if (!state.matchScores) state.matchScores = {};
       updateTotalScores();
@@ -1968,6 +2019,26 @@
       if (state.users && state.users.length > 0) {
         updateBtn.style.display = '';
       }
+    }
+    
+    var refetchServerBtn = document.getElementById('btn-refetch-server');
+    if (refetchServerBtn) {
+      refetchServerBtn.addEventListener('click', function () {
+        if (messageEl) messageEl.textContent = '서버에서 데이터를 불러오는 중...';
+        refetchFromServer(function (ok) {
+          if (messageEl) messageEl.textContent = ok ? '서버에서 최신 데이터를 불러왔습니다.' : '서버에 연결할 수 없습니다.';
+          var dsEl = document.getElementById('data-source-msg');
+          if (dsEl) {
+            dsEl.textContent = state.dataSource === 'server'
+              ? '데이터: 서버(공유) — data/tennis.json'
+              : '데이터: 이 기기만 (같은 주소로 접속하면 공유됨)';
+          }
+          if (ok) {
+            state.currentMonth = state.currentMonth || new Date(new Date().getFullYear(), new Date().getMonth(), 1);
+            renderCalendar();
+          }
+        });
+      });
     }
     
     // 파일 선택 버튼 이벤트 리스너

@@ -29,6 +29,33 @@
     selectedMemberId: null
   };
 
+  function applyStateData(data) {
+    if (!data) return;
+    if (data.users) state.users = data.users;
+    if (data.events) state.events = data.events;
+    if (data.baseScores) state.baseScores = data.baseScores;
+    if (data.matchScores) state.matchScores = data.matchScores;
+    if (data.headToHead) {
+      try {
+        state.headToHead = data.headToHead;
+      } catch (e) {
+        state.headToHead = {};
+      }
+    }
+    if (data.matchWins) {
+      try {
+        state.matchWins = data.matchWins;
+      } catch (e) {
+        state.matchWins = {};
+      }
+    }
+    if (!state.baseScores) state.baseScores = {};
+    if (!state.matchScores) state.matchScores = {};
+    if (!state.headToHead) state.headToHead = {};
+    if (!state.matchWins) state.matchWins = {};
+    updateTotalScores();
+  }
+
   function loadStateFromLocal() {
     try {
       var u = localStorage.getItem('tennis_users');
@@ -43,7 +70,6 @@
       if (ms) {
         state.matchScores = JSON.parse(ms);
       }
-      // 기존 tennis_scores는 무시 (baseScores와 matchScores로 분리됨)
       if (!state.baseScores) state.baseScores = {};
       if (!state.matchScores) state.matchScores = {};
       var h = localStorage.getItem('tennis_headToHead');
@@ -159,38 +185,53 @@
 
   function loadState(cb) {
     cb = cb || function () {};
-    try {
-      loadStateFromLocal();
-      console.log('loadState 완료, 사용자 수:', state.users ? state.users.length : 0);
-      
-      // headToHead가 비어있거나 matchWins가 비어있으면 기존 경기 결과로 재구성
-      var hasHeadToHead = state.headToHead && Object.keys(state.headToHead).length > 0;
-      var hasMatchWins = state.matchWins && Object.keys(state.matchWins).length > 0;
-      var hasAppliedResults = false;
-      
-      // appliedMatchResults가 있는지 확인
-      Object.keys(state.events).forEach(function(dateKey) {
-        var ev = state.events[dateKey];
-        if (ev && ev.appliedMatchResults && ev.appliedMatchResults.length > 0) {
-          hasAppliedResults = true;
+    function afterLoad() {
+      try {
+        console.log('loadState 완료, 사용자 수:', state.users ? state.users.length : 0);
+        var hasHeadToHead = state.headToHead && Object.keys(state.headToHead).length > 0;
+        var hasMatchWins = state.matchWins && Object.keys(state.matchWins).length > 0;
+        var hasAppliedResults = false;
+        Object.keys(state.events).forEach(function(dateKey) {
+          var ev = state.events[dateKey];
+          if (ev && ev.appliedMatchResults && ev.appliedMatchResults.length > 0) {
+            hasAppliedResults = true;
+          }
+        });
+        if (hasAppliedResults && (!hasHeadToHead || !hasMatchWins)) {
+          console.log('headToHead 또는 matchWins가 비어있어 기존 경기 결과로 재구성합니다.');
+          rebuildHeadToHeadFromEvents();
+          saveState();
         }
-      });
-      
-      // appliedMatchResults가 있는데 headToHead나 matchWins가 비어있으면 재구성
-      if (hasAppliedResults && (!hasHeadToHead || !hasMatchWins)) {
-        console.log('headToHead 또는 matchWins가 비어있어 기존 경기 결과로 재구성합니다.');
-        console.log('hasHeadToHead:', hasHeadToHead, 'hasMatchWins:', hasMatchWins, 'hasAppliedResults:', hasAppliedResults);
-        rebuildHeadToHeadFromEvents();
-        saveState(); // 재구성된 데이터 저장
-      } else if (hasAppliedResults && hasHeadToHead && hasMatchWins) {
-        console.log('headToHead와 matchWins가 이미 존재합니다. 재구성하지 않습니다.');
-        console.log('headToHead 항목 수:', Object.keys(state.headToHead).length, 'matchWins 항목 수:', Object.keys(state.matchWins).length);
+        cb(false);
+      } catch (e) {
+        console.error('loadState 오류:', e);
+        cb(false);
       }
-      
-      cb(false);
-    } catch (e) {
-      console.error('loadState 오류:', e);
-      cb(false);
+    }
+    if (window.location.protocol === 'http:' || window.location.protocol === 'https:') {
+      fetch('/api/state', { method: 'GET' })
+        .then(function (res) { return res.ok ? res.json() : null; })
+        .then(function (data) {
+          if (data != null) {
+            applyStateData(data);
+            saveState();
+            console.log('loadState - 서버에서 데이터 불러옴 (모두 동일한 정보)');
+          } else {
+            loadStateFromLocal();
+          }
+          afterLoad();
+        })
+        .catch(function () {
+          loadStateFromLocal();
+          afterLoad();
+        });
+    } else {
+      try {
+        loadStateFromLocal();
+      } catch (e) {
+        console.error('loadState 오류:', e);
+      }
+      afterLoad();
     }
   }
 
@@ -317,19 +358,30 @@
     return a;
   }
 
-  function splitIntoTeams(four, sameDayTeammates) {
+  // preferredOrder: 시도 순서 [0,1,2]. 기본은 [0,1,2]. 무작위 게임에서는 [2,0,1]로 (1등+꼴찌 vs 2등+2꼴찌) 우선
+  function splitIntoTeams(four, sameDayTeammates, preferredOrder) {
     const pairs = [
       [[four[0], four[1]], [four[2], four[3]]],
       [[four[0], four[2]], [four[1], four[3]]],
       [[four[0], four[3]], [four[1], four[2]]]
     ];
-    for (let i = 0; i < pairs.length; i++) {
+    var order = preferredOrder || [0, 1, 2];
+    var bestIdx = order[0];
+    var bestBad = 3;
+    for (var o = 0; o < order.length; o++) {
+      var i = order[o];
       const [t1, t2] = pairs[i];
       const bad1 = pairKey(t1[0], t1[1]) in sameDayTeammates;
       const bad2 = pairKey(t2[0], t2[1]) in sameDayTeammates;
-      if (!bad1 && !bad2) return { team1: t1, team2: t2 };
+      var badCount = (bad1 ? 1 : 0) + (bad2 ? 1 : 0);
+      if (badCount === 0) return { team1: t1, team2: t2 };
+      if (badCount < bestBad) {
+        bestBad = badCount;
+        bestIdx = i;
+      }
     }
-    return { team1: pairs[0][0], team2: pairs[0][1] };
+    var best = pairs[bestIdx];
+    return { team1: best[0], team2: best[1] };
   }
 
   function buildBracketForGame(dateKey, gameIndex, sameDayTeammates) {
@@ -354,23 +406,47 @@
 
     var gradeOrder = { A: 0, B: 1, C: 2 };
     var ordered = poolParticipants.map(function (p) {
-      return { userId: p.userId, grade: (userById[p.userId] && userById[p.userId].grade) || 'C' };
+      var u = userById[p.userId];
+      var grade = (u && u.grade) ? u.grade : 'C';
+      var score = (state.scores && state.scores[p.userId] !== undefined) ? state.scores[p.userId] : (state.baseScores && state.baseScores[p.userId]) || 0;
+      return { userId: p.userId, grade: grade, score: score };
     });
+
     if (gameIndex <= GAMES_BY_GRADE) {
+      // 1~3게임: 레벨(그레이드) 비슷한 사람끼리 - 그레이드 순 정렬
       ordered.sort(function (a, b) {
         return (gradeOrder[a.grade] !== undefined ? gradeOrder[a.grade] : 3) - (gradeOrder[b.grade] !== undefined ? gradeOrder[b.grade] : 3);
       });
     } else {
-      ordered = shuffle(ordered);
+      // 4~5게임: 무작위 게임 = 점수만으로 순위(1등+꼴찌, 2등+2꼴찌). 그레이드는 무시
+      ordered.sort(function (a, b) {
+        return (b.score || 0) - (a.score || 0);
+      });
     }
     var available = ordered.map(function (p) { return p.userId; });
+
+    // 무작위 게임(4,5): (1등+꼴찌) vs (2등+2꼴찌) 우선. 1~3게임: 그레이드 2+2일 때 (A,C)vs(A,C) 교차 배분 우선
+    var preferredOrder = (gameIndex > GAMES_BY_GRADE) ? [2, 0, 1] : undefined;
 
     var matches = [];
     var i = 0;
     while (i + 4 <= available.length) {
       var four = available.slice(i, i + 4);
       i += 4;
-      var spl = splitIntoTeams(four, sameDayTeammates);
+      var orderForFour = preferredOrder;
+      if (gameIndex <= GAMES_BY_GRADE) {
+        var gradeCount = {};
+        four.forEach(function (id) {
+          var g = (userById[id] && userById[id].grade) ? userById[id].grade : 'C';
+          gradeCount[g] = (gradeCount[g] || 0) + 1;
+        });
+        var counts = Object.keys(gradeCount).map(function (g) { return gradeCount[g]; }).sort(function (a, b) { return b - a; });
+        // 무조건 4명이고 같은 그레이드 2명씩(두 그레이드 각 2명)일 때만 교차 적용 → (A,C)vs(A,C) 우선
+        if (counts.length === 2 && counts[0] === 2 && counts[1] === 2) {
+          orderForFour = [1, 2, 0];
+        }
+      }
+      var spl = splitIntoTeams(four, sameDayTeammates, orderForFour);
       var team1 = spl.team1;
       var team2 = spl.team2;
       matches.push({ team1: team1, team2: team2, winner: null });
@@ -2153,6 +2229,14 @@
       if (isPastDate(dateKey)) {
         showScreen('screen-bracket');
         renderBracket();
+        return;
+      }
+      // 대진표 작성 시 관리자 암호 확인 (암호가 맞을 때만 작성 후 해당 페이지로 이동)
+      var inputPassword = prompt('대진표 작성을 위해 관리자 암호를 입력하세요.');
+      if (inputPassword === null) return; // 취소
+      var adminPassword = state.memberPassword || '1234';
+      if (inputPassword !== adminPassword) {
+        alert('암호가 일치하지 않습니다. 대진표를 작성할 수 없습니다.');
         return;
       }
       var totalMatchesInSnapshot = (ev.bracketSnapshot || []).reduce(function (s, b) {
